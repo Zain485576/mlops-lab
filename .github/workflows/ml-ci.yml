@@ -1,0 +1,41 @@
+name: ML CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+      - run: python -m src.train --run-name baseline
+      - run: python -m src.promote
+      - run: python -m src.evaluate        # <-- quality gate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model
+          path: model/
+
+  package:
+    needs: train
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: model, path: model }
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          docker build -t ghcr.io/${{ github.repository_owner }}/mlops-lab:sha-$SHORT_SHA \
+                       --build-arg GIT_SHA=${{ github.sha }} .
+          docker push ghcr.io/${{ github.repository_owner }}/mlops-lab:sha-$SHORT_SHA
